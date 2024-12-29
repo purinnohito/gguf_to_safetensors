@@ -1,7 +1,5 @@
-torch>=2.0.0
-torchvision>=0.15.0
-torchaudio>=2.0.0
-numpy<2
-safetensors>=0.3.0
+torch>=2.5.1
+numpy>=2.2.0
+safetensors>=0.4.5
 gguf>=0.13.0
-transformers
+transformers>=4.47.0

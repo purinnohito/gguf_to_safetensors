@@ -2,7 +2,7 @@ import os
 import argparse
 import torch
 import numpy as np
-from safetensors.numpy import save_file
+from safetensors.torch import save_file
 from safetensors import safe_open
 from typing import Dict, Tuple
 from gguf import GGUFReader, dequantize
@@ -49,47 +49,43 @@ def load_gguf_and_extract_metadata(gguf_path: str) -> Tuple[GGUFReader, list]:
 
 
 def convert_gguf_to_safetensors(gguf_path: str, output_path: str, use_bf16: bool) -> None:
-    """Convert a GGUF file to a safetensors file with dequantized data."""
     reader, tensors_metadata = load_gguf_and_extract_metadata(gguf_path)
     print(f"Extracted {len(tensors_metadata)} tensors from GGUF file")
 
-    tensors_dict = {}
+    tensors_dict: dict[str, torch.Tensor] = {}
 
     for i, tensor_info in enumerate(tensors_metadata):
         tensor_name = tensor_info['name']
         shape = tensor_info['shape']
         quant_type_id = tensor_info['type']
-        
-        # 🔥 ここでタイプIDから量子化タイプ名を取得する
         quant_type = get_quant_type(quant_type_id)
 
-        #print(f"Processing tensor: {tensor_name} | Shape: {shape} | Type: {quant_type}:{quant_type_id}")
-        #ここ以下がコード修正対象（根本的に間違ってる）
-        #Transformersの
-        # for tensor in reader.tensors 
-        #以下のdequantizeメソッド（llama.cppのggufパッケージ側の処理）を参考にする
         tensor_data = reader.get_tensor(i)
-        name = tensor_data.name
         weights = dequantize(tensor_data.data, tensor_data.tensor_type).copy()
-        # NumPy配列をPyTorchテンソルに変換する際に、非書き込み可能な配列をコピー
-        weights = weights.copy()  # メモリの非書き込み制約を解除
-
 
         try:
-            dtype = torch.bfloat16 if use_bf16 else torch.float16
-            weights_hf = torch.from_numpy(weights).to(dtype).numpy()
-        except TypeError as e:
-            print(f"TypeError occurred: {e}, fallback fp16")
-            weights_hf = torch.from_numpy(weights.astype(np.float32)).to(torch.float16).numpy()
+            # デバイスを確認し、適切なデータ型を設定
+            if use_bf16:
+                print(f"Attempting BF16 conversion")
+                weights_tensor_tmp = torch.from_numpy(weights).to(dtype=torch.float32)
+                weights_tensor = weights_tensor_tmp.clone().to(torch.bfloat16)
+            else:
+                print("Using FP16 conversion.")
+                weights_tensor = torch.from_numpy(weights).to(dtype=torch.float16)
 
-        print(f"dequantize tensor: {name} | Shape: {weights_hf.shape} | Type: {weights_hf.dtype}")
+            weights_hf = weights_tensor
+        except Exception as e:
+            print(f"Error during BF16 conversion for tensor '{tensor_name}': {e}")
+            weights_tensor = torch.from_numpy(weights.astype(np.float32)).to(torch.float16)
+            weights_hf = weights_tensor
 
-        tensors_dict[name] = weights_hf
+        print(f"dequantize tensor: {tensor_name} | Shape: {weights_hf.shape} | Type: {weights_tensor.dtype}")
 
-    #GGUFからメタデータを取り出して付与する
+        tensors_dict[tensor_name] = weights_hf
+
     metadata = {"modelspec.architecture": f"{reader.get_field(Keys.General.FILE_TYPE)}", "description": "Model converted from gguf."}
 
-    save_file(tensors_dict, output_path,metadata=metadata)
+    save_file(tensors_dict, output_path, metadata=metadata)
     print("Conversion complete!")
 
 if __name__ == "__main__":
