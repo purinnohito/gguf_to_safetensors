@@ -1,4 +1,5 @@
 import os
+import argparse
 import torch
 import numpy as np
 from safetensors.numpy import save_file
@@ -47,7 +48,7 @@ def load_gguf_and_extract_metadata(gguf_path: str) -> Tuple[GGUFReader, list]:
     return reader, tensors_metadata
 
 
-def convert_gguf_to_safetensors(gguf_path: str, output_path: str) -> None:
+def convert_gguf_to_safetensors(gguf_path: str, output_path: str, use_bf16: bool) -> None:
     """Convert a GGUF file to a safetensors file with dequantized data."""
     reader, tensors_metadata = load_gguf_and_extract_metadata(gguf_path)
     print(f"Extracted {len(tensors_metadata)} tensors from GGUF file")
@@ -73,13 +74,12 @@ def convert_gguf_to_safetensors(gguf_path: str, output_path: str) -> None:
         # NumPy配列をPyTorchテンソルに変換する際に、非書き込み可能な配列をコピー
         weights = weights.copy()  # メモリの非書き込み制約を解除
 
-        #TODO: BF16への対応
+
         try:
-            # PyTorchテンソルに変換してfp16にキャスト
-            weights_hf = torch.from_numpy(weights).to(torch.float16).numpy()
+            dtype = torch.bfloat16 if use_bf16 else torch.float16
+            weights_hf = torch.from_numpy(weights).to(dtype).numpy()
         except TypeError as e:
-            print(f"TypeError occurred: {e}")
-            # 型をfloat32にキャストして再試行
+            print(f"TypeError occurred: {e}, fallback fp16")
             weights_hf = torch.from_numpy(weights.astype(np.float32)).to(torch.float16).numpy()
 
         print(f"dequantize tensor: {name} | Shape: {weights_hf.shape} | Type: {weights_hf.dtype}")
@@ -92,10 +92,12 @@ def convert_gguf_to_safetensors(gguf_path: str, output_path: str) -> None:
     save_file(tensors_dict, output_path,metadata=metadata)
     print("Conversion complete!")
 
-#TODO:パラメータ引数でファイルパスを渡せるようにする
 if __name__ == "__main__":
-    # GGUF file path
-    gguf_path = './flux1-schnell-Q8_0.gguf'
-    # output file path
-    output_path = './flux1-schnell-Convert-bf16.safetensors'
-    convert_gguf_to_safetensors(gguf_path, output_path)
+    parser = argparse.ArgumentParser(description="Convert GGUF files to safetensors format.")
+    parser.add_argument("--input", required=True, help="Path to the input GGUF file.")
+    parser.add_argument("--output", required=True, help="Path to the output safetensors file.")
+    parser.add_argument("--bf16", action="store_true", help="(onry cuda)Convert tensors to BF16 format instead of FP16.")
+
+    args = parser.parse_args()
+
+    convert_gguf_to_safetensors(args.input, args.output, args.bf16)
