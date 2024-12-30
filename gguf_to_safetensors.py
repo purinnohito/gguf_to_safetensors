@@ -8,29 +8,6 @@ from typing import Dict, Tuple
 from gguf import GGUFReader, dequantize
 from gguf.constants import GGML_QUANT_SIZES, GGMLQuantizationType, Keys
 
-TYPE_TO_QUANT_MAP = {
-    0: 'F32',
-    1: 'F16',
-    2: 'Q4_0',
-    3: 'Q4_1',
-    6: 'Q5_0',
-    7: 'Q5_1',
-    8: 'Q8_0',  # 🔥 ここが追加されたQ8タイプのマッピング
-    9: 'Q8_1',
-    10: 'Q2_K',
-    11: 'Q3_K',
-    12: 'Q4_K',
-    13: 'Q5_K',
-    14: 'Q6_K',
-    15: 'Q8_K',
-}
-
-# タイプ番号から適切な量子化形式に変換する関数
-def get_quant_type(type_id: int) -> str:
-    """Type ID (整数) を量子化タイプ (文字列) にマッピングする関数。"""
-    return TYPE_TO_QUANT_MAP.get(type_id, 'Unknown')
-
-
 def load_gguf_and_extract_metadata(gguf_path: str) -> Tuple[GGUFReader, list]:
     """Load GGUF file and extract metadata and tensors."""
     reader = GGUFReader(gguf_path)
@@ -56,9 +33,6 @@ def convert_gguf_to_safetensors(gguf_path: str, output_path: str, use_bf16: bool
 
     for i, tensor_info in enumerate(tensors_metadata):
         tensor_name = tensor_info['name']
-        shape = tensor_info['shape']
-        quant_type_id = tensor_info['type']
-        quant_type = get_quant_type(quant_type_id)
 
         tensor_data = reader.get_tensor(i)
         weights = dequantize(tensor_data.data, tensor_data.tensor_type).copy()
@@ -67,8 +41,8 @@ def convert_gguf_to_safetensors(gguf_path: str, output_path: str, use_bf16: bool
             # デバイスを確認し、適切なデータ型を設定
             if use_bf16:
                 print(f"Attempting BF16 conversion")
-                weights_tensor_tmp = torch.from_numpy(weights).to(dtype=torch.float32)
-                weights_tensor = weights_tensor_tmp.clone().to(torch.bfloat16)
+                weights_tensor = torch.from_numpy(weights).to(dtype=torch.float32)
+                weights_tensor = weights_tensor.to(torch.bfloat16)
             else:
                 print("Using FP16 conversion.")
                 weights_tensor = torch.from_numpy(weights).to(dtype=torch.float16)
@@ -80,15 +54,18 @@ def convert_gguf_to_safetensors(gguf_path: str, output_path: str, use_bf16: bool
             weights_hf = weights_tensor
 
         print(f"dequantize tensor: {tensor_name} | Shape: {weights_hf.shape} | Type: {weights_tensor.dtype}")
+        del weights_tensor
+        del weights
 
         tensors_dict[tensor_name] = weights_hf
+        del weights_hf
 
     metadata = {"modelspec.architecture": f"{reader.get_field(Keys.General.FILE_TYPE)}", "description": "Model converted from gguf."}
 
     save_file(tensors_dict, output_path, metadata=metadata)
     print("Conversion complete!")
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(description="Convert GGUF files to safetensors format.")
     parser.add_argument("--input", required=True, help="Path to the input GGUF file.")
     parser.add_argument("--output", required=True, help="Path to the output safetensors file.")
@@ -97,3 +74,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     convert_gguf_to_safetensors(args.input, args.output, args.bf16)
+
+if __name__ == "__main__":
+    main()
