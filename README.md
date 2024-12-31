@@ -1,3 +1,8 @@
+```
+python gguf_to_safetensors.py --input mywait.gguf --output mywait.safetensors
+```
+
+----
 Convert GGUF to safetensors
 
 Specify the GGUF file to convert using --input and the desired safetensors filename using --output
